@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: vidlab-backend
+    env: python
+    buildCommand: "apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt"
+    startCommand: "gunicorn ad_generator_backend:app --timeout 300 --workers 1"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
