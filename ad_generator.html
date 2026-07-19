@@ -50,7 +50,8 @@
     <div id="root"></div>
 
     <script>
-        const API_BASE = 'https://vidlab-backend-3za9.onrender.com/';
+        const BACKEND_ORIGIN = 'https://vidlab-backend-3za9.onrender.com';
+        const API_BASE = `${BACKEND_ORIGIN}/api`;
         
         let currentPage = 'landing';
         let formData = {
@@ -93,7 +94,7 @@
 
                 console.log('✅ Ad generated!', result);
                 currentPage = 'success';
-                formData.videoUrl = result.video_url;
+                formData.videoUrl = `${BACKEND_ORIGIN}${result.video_url}`;
                 isGenerating = false;
                 render();
 
