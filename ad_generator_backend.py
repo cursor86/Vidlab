@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 import cv2
@@ -24,6 +24,19 @@ try:
 except ImportError:
     TTS_AVAILABLE = False
     print("⚠️  gTTS not installed. Run: pip install gtts")
+
+@app.route('/')
+def serve_home():
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'home.html')
+
+@app.route('/<path:filename>')
+def serve_static_html(filename):
+    if not filename.endswith('.html'):
+        return jsonify({'error': 'Not found'}), 404
+    directory = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(directory, filename)):
+        return jsonify({'error': 'Not found'}), 404
+    return send_from_directory(directory, filename)
 
 @app.route('/api/health', methods=['GET'])
 def health():
@@ -271,5 +284,8 @@ if __name__ == '__main__':
     else:
         print("⚠️  Install FFmpeg: brew install ffmpeg (Mac) or apt-get install ffmpeg (Linux)")
     
-    print("\n🚀 Starting server on http://localhost:5000")
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+
+    print(f"\n🚀 Starting server on http://localhost:{port}")
+    app.run(debug=debug_mode, host='0.0.0.0', port=port)
