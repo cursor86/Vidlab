@@ -189,6 +189,8 @@ def generate_video(image_path, audio_path, title, features, output_path):
             '-i', f'{frames_dir}/frame_%06d.png',
             '-i', audio_path,
             '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
             '-c:a', 'aac',
             '-shortest',
             output_path
