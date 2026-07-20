@@ -106,6 +106,12 @@ MONTAGE_FPS = 12
 MONTAGE_SECONDS_PER_IMAGE = 0.5
 MONTAGE_MIN_DURATION = 25
 MONTAGE_MAX_DURATION = 30
+MONTAGE_TITLE_SECONDS = 2.5
+MONTAGE_FEATURE_SLIDE_SECONDS = 1.8
+MONTAGE_CTA_SLIDE_SECONDS = 3.0
+MONTAGE_MAX_FEATURES = 3
+SLIDE_GRADIENT_TOP = (234, 126, 102)     # BGR for #667eea
+SLIDE_GRADIENT_BOTTOM = (162, 75, 118)   # BGR for #764ba2
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.aac', '.ogg'}
 
 CLASSIC_WIDTH = 1080
@@ -118,6 +124,8 @@ def generate_montage():
     try:
         data = request.form
         title = data.get('title', '').strip()
+        features = data.get('features', '').split(',')
+        features = [f.strip() for f in features if f.strip()]
         cta = data.get('cta', '').strip()
         link = data.get('link', '').strip()
 
@@ -147,7 +155,7 @@ def generate_montage():
         print(f"🎵 Music saved: {music_path}")
 
         output_path = f'outputs/montage_{run_id}.mp4'
-        if not generate_montage_video(image_paths, music_path, title, cta, link, output_path):
+        if not generate_montage_video(image_paths, music_path, title, features, cta, link, output_path):
             return jsonify({'error': 'Failed to generate montage video'}), 500
 
         print(f"✅ Montage generated: {output_path}")
@@ -187,8 +195,49 @@ def apply_ken_burns_zoom(img, local_progress, max_zoom=0.15):
     cropped = img[y0:y0 + crop_h, x0:x0 + crop_w]
     return cv2.resize(cropped, (w, h))
 
-def generate_montage_video(image_paths, music_path, title, cta, link, output_path):
-    """Generate a fast-cut multi-image montage synced to a music track."""
+def make_gradient_bg(width, height, top_color, bottom_color):
+    """Solid vertical gradient background for text slides."""
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    for c in range(3):
+        frame[:, :, c] = np.linspace(top_color[c], bottom_color[c], height, dtype=np.uint8)[:, None]
+    return frame
+
+def fit_font_scale(text, max_width, base_scale, font=cv2.FONT_HERSHEY_SIMPLEX, thickness=2, min_scale=0.5):
+    """Shrink font scale until the text fits within max_width, so long strings never get clipped."""
+    scale = base_scale
+    while scale > min_scale:
+        text_size = cv2.getTextSize(text, font, scale, thickness)[0]
+        if text_size[0] <= max_width:
+            return scale
+        scale -= 0.1
+    return min_scale
+
+def draw_centered_text(frame, text, y, max_width_ratio=0.85, base_scale=1.4, color=(255, 255, 255), alpha=1.0, thickness=2):
+    """Draw horizontally-centered text, auto-shrinking to fit within the frame width."""
+    if not text or alpha <= 0:
+        return
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    width = frame.shape[1]
+    max_width = int(width * max_width_ratio)
+    scale = fit_font_scale(text, max_width, base_scale, font, thickness)
+    text_size = cv2.getTextSize(text, font, scale, thickness)[0]
+    x = (width - text_size[0]) // 2
+    overlay = frame.copy()
+    cv2.putText(overlay, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+    cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
+
+def draw_left_text(frame, text, x, y, max_width, base_scale=1.2, color=(255, 255, 255), alpha=1.0, thickness=2):
+    """Draw left-aligned text starting at x, auto-shrinking to fit within max_width."""
+    if not text or alpha <= 0:
+        return
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = fit_font_scale(text, max_width, base_scale, font, thickness)
+    overlay = frame.copy()
+    cv2.putText(overlay, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+    cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
+
+def generate_montage_video(image_paths, music_path, title, features, cta, link, output_path):
+    """Generate a structured montage: fast-cut hook photos -> feature slides -> CTA end card, synced to music."""
     try:
         images = []
         for p in image_paths:
@@ -202,6 +251,8 @@ def generate_montage_video(image_paths, music_path, title, cta, link, output_pat
             print("❌ No valid images to build montage")
             return False
 
+        features = [f.strip() for f in features if f.strip()][:MONTAGE_MAX_FEATURES]
+
         music_duration = get_audio_duration(music_path)
         if music_duration is None:
             music_duration = MONTAGE_MIN_DURATION
@@ -209,35 +260,62 @@ def generate_montage_video(image_paths, music_path, title, cta, link, output_pat
 
         fps = MONTAGE_FPS
         frames_per_image = max(1, int(MONTAGE_SECONDS_PER_IMAGE * fps))
-        total_frames = max(frames_per_image, int(total_duration * fps))
+        title_frames = int(MONTAGE_TITLE_SECONDS * fps)
+        cta_frames = int(MONTAGE_CTA_SLIDE_SECONDS * fps)
+        feature_frames_each = int(MONTAGE_FEATURE_SLIDE_SECONDS * fps)
+        feature_total_frames = feature_frames_each * len(features)
 
-        print(f"🎬 Creating {total_frames} frames at {fps}fps across {len(images)} images...")
+        total_frames = max(frames_per_image + cta_frames, int(total_duration * fps))
+        photo_frames = max(frames_per_image, total_frames - cta_frames - feature_total_frames)
+
+        print(f"🎬 Building montage: {photo_frames} hook-photo frames, "
+              f"{feature_total_frames} feature-slide frames, {cta_frames} CTA frames at {fps}fps")
 
         frames_dir = f'temp/montage_frames_{datetime.now().timestamp()}'
         os.makedirs(frames_dir, exist_ok=True)
 
-        for frame_num in range(total_frames):
-            image_index = (frame_num // frames_per_image) % len(images)
-            local_progress = (frame_num % frames_per_image) / frames_per_image
+        slide_bg = make_gradient_bg(MONTAGE_WIDTH, MONTAGE_HEIGHT, SLIDE_GRADIENT_TOP, SLIDE_GRADIENT_BOTTOM)
+        frame_num = 0
+
+        # --- Segment 1: fast-cut hook photos, with the title held on top for a few seconds ---
+        for i in range(photo_frames):
+            image_index = (i // frames_per_image) % len(images)
+            local_progress = (i % frames_per_image) / frames_per_image
             frame = apply_ken_burns_zoom(images[image_index], local_progress)
 
-            overall_progress = frame_num / total_frames
+            if title and i < title_frames:
+                title_progress = i / title_frames
+                title_alpha = min(1.0, max(0, 1.0 - title_progress * 1.3))
+                draw_centered_text(frame, title, 110, base_scale=1.3, color=(255, 255, 255), alpha=title_alpha, thickness=3)
 
-            if title:
-                title_alpha = min(1.0, max(0, 1.0 - overall_progress * 6))
-                if title_alpha > 0:
-                    add_text(frame, title, (MONTAGE_WIDTH // 2, 100), font_scale=1.3, alpha=title_alpha, color=(255, 255, 255))
+            cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
+            frame_num += 1
+            if frame_num % 30 == 0:
+                print(f"  ✓ Frame {frame_num}/{total_frames}")
 
+        # --- Segment 2: one clean slide per feature, no busy photo behind the text ---
+        for feature in features:
+            for j in range(feature_frames_each):
+                frame = slide_bg.copy()
+                local_progress = j / feature_frames_each
+                alpha = min(1.0, local_progress * 5)
+                draw_centered_text(frame, feature, MONTAGE_HEIGHT // 2, base_scale=1.6, color=(255, 255, 255), alpha=alpha, thickness=3)
+                cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
+                frame_num += 1
+                if frame_num % 30 == 0:
+                    print(f"  ✓ Frame {frame_num}/{total_frames}")
+
+        # --- Segment 3: dedicated CTA end card ---
+        for j in range(cta_frames):
+            frame = slide_bg.copy()
+            local_progress = j / cta_frames
+            alpha = min(1.0, local_progress * 4)
             if cta:
-                cta_alpha = min(1.0, max(0, (overall_progress - 0.8) * 5))
-                if cta_alpha > 0:
-                    add_text(frame, cta, (MONTAGE_WIDTH // 2, MONTAGE_HEIGHT - 140), font_scale=1.4, alpha=cta_alpha, color=(0, 100, 255))
-                    if link:
-                        add_text(frame, link, (MONTAGE_WIDTH // 2, MONTAGE_HEIGHT - 90), font_scale=0.9, alpha=cta_alpha, color=(255, 255, 255))
-
-            frame_path = f'{frames_dir}/frame_{frame_num:06d}.png'
-            cv2.imwrite(frame_path, frame)
-
+                draw_centered_text(frame, cta, MONTAGE_HEIGHT // 2 - 50, base_scale=1.8, color=(255, 255, 255), alpha=alpha, thickness=3)
+            if link:
+                draw_centered_text(frame, link, MONTAGE_HEIGHT // 2 + 50, base_scale=1.0, color=(220, 220, 220), alpha=alpha, thickness=2)
+            cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
+            frame_num += 1
             if frame_num % 30 == 0:
                 print(f"  ✓ Frame {frame_num}/{total_frames}")
 
@@ -339,19 +417,20 @@ def generate_video(image_path, audio_path, title, features, cta, output_path):
             # Add title with fade-in effect
             alpha = min(1.0, progress * 3)  # Fade in over first 1/3
             if alpha > 0:
-                add_text(frame, title, (width//2, 100), font_scale=2, alpha=alpha, color=(255, 255, 255))
+                draw_centered_text(frame, title, 110, base_scale=2, color=(255, 255, 255), alpha=alpha, thickness=3)
 
             # Add features with sliding effect
             feature_alpha = min(1.0, max(0, (progress - 0.2) * 2))
             if feature_alpha > 0:
-                y_pos = 250
+                y_pos = 260
+                feature_max_width = width - 160
                 for i, feature in enumerate(features[:3]):
-                    add_text(frame, f"• {feature}", (100, y_pos + i*60), font_scale=1.2, alpha=feature_alpha, color=(0, 255, 100))
+                    draw_left_text(frame, f"• {feature}", 100, y_pos + i*70, feature_max_width, base_scale=1.3, color=(0, 255, 100), alpha=feature_alpha, thickness=2)
 
             # Add CTA at end
             cta_alpha = min(1.0, max(0, (progress - 0.7) * 3))
             if cta_alpha > 0:
-                add_text(frame, cta_text, (width//2, height - 100), font_scale=2, alpha=cta_alpha, color=(0, 100, 255))
+                draw_centered_text(frame, cta_text, height - 110, base_scale=2, color=(0, 100, 255), alpha=cta_alpha, thickness=3)
 
             # Save frame
             frame_path = f'{frames_dir}/frame_{frame_num:06d}.png'
@@ -396,22 +475,6 @@ def generate_video(image_path, audio_path, title, features, cta, output_path):
     except Exception as e:
         print(f"❌ Video generation error: {e}")
         return False
-
-def add_text(frame, text, position, font_scale=1, alpha=1.0, color=(255, 255, 255)):
-    """Add text to frame with alpha blending"""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    thickness = 2
-    
-    # Get text size
-    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-    x, y = position
-    
-    # Create text overlay
-    overlay = frame.copy()
-    cv2.putText(overlay, text, (x - text_size[0]//2, y), font, font_scale, color, thickness)
-    
-    # Blend
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
 
 def get_audio_duration(audio_path):
     """Get audio duration using ffprobe"""
