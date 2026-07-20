@@ -100,6 +100,174 @@ def generate_ad():
         print(f"❌ Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+MONTAGE_WIDTH = 720
+MONTAGE_HEIGHT = 1280
+MONTAGE_FPS = 24
+MONTAGE_SECONDS_PER_IMAGE = 0.5
+MONTAGE_MAX_DURATION = 20
+ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.aac', '.ogg'}
+
+@app.route('/api/generate-montage', methods=['POST'])
+def generate_montage():
+    try:
+        data = request.form
+        title = data.get('title', '').strip()
+        cta = data.get('cta', '').strip()
+        link = data.get('link', '').strip()
+
+        image_files = request.files.getlist('images')
+        if not image_files:
+            return jsonify({'error': 'No images uploaded'}), 400
+
+        if 'music' not in request.files or request.files['music'].filename == '':
+            return jsonify({'error': 'No music file uploaded'}), 400
+
+        music_file = request.files['music']
+        music_ext = os.path.splitext(music_file.filename)[1].lower()
+        if music_ext not in ALLOWED_AUDIO_EXTENSIONS:
+            return jsonify({'error': f'Unsupported music file type: {music_ext}'}), 400
+
+        run_id = datetime.now().timestamp()
+        image_paths = []
+        for i, image_file in enumerate(image_files):
+            image_path = f'uploads/montage_{run_id}_{i}.png'
+            image_file.save(image_path)
+            image_paths.append(image_path)
+
+        music_path = f'temp/montage_music_{run_id}{music_ext}'
+        music_file.save(music_path)
+
+        print(f"📸 {len(image_paths)} images saved for montage")
+        print(f"🎵 Music saved: {music_path}")
+
+        output_path = f'outputs/montage_{run_id}.mp4'
+        if not generate_montage_video(image_paths, music_path, title, cta, link, output_path):
+            return jsonify({'error': 'Failed to generate montage video'}), 500
+
+        print(f"✅ Montage generated: {output_path}")
+
+        for p in image_paths:
+            os.remove(p)
+        os.remove(music_path)
+
+        return jsonify({
+            'success': True,
+            'message': 'Montage generated successfully!',
+            'video_url': f'/api/download/{os.path.basename(output_path)}'
+        })
+
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+def resize_cover(img, target_w, target_h):
+    """Resize and center-crop an image to exactly fill target_w x target_h."""
+    h, w = img.shape[:2]
+    scale = max(target_w / w, target_h / h)
+    new_w, new_h = int(w * scale) + 1, int(h * scale) + 1
+    resized = cv2.resize(img, (new_w, new_h))
+    x0 = (new_w - target_w) // 2
+    y0 = (new_h - target_h) // 2
+    return resized[y0:y0 + target_h, x0:x0 + target_w]
+
+def apply_ken_burns_zoom(img, local_progress, max_zoom=0.15):
+    """Crop progressively tighter toward center to simulate a zoom-in."""
+    h, w = img.shape[:2]
+    zoom = 1.0 + max_zoom * local_progress
+    crop_w = int(w / zoom)
+    crop_h = int(h / zoom)
+    x0 = (w - crop_w) // 2
+    y0 = (h - crop_h) // 2
+    cropped = img[y0:y0 + crop_h, x0:x0 + crop_w]
+    return cv2.resize(cropped, (w, h))
+
+def generate_montage_video(image_paths, music_path, title, cta, link, output_path):
+    """Generate a fast-cut multi-image montage synced to a music track."""
+    try:
+        images = []
+        for p in image_paths:
+            img = cv2.imread(p)
+            if img is None:
+                print(f"❌ Failed to read image: {p}")
+                continue
+            images.append(resize_cover(img, MONTAGE_WIDTH, MONTAGE_HEIGHT))
+
+        if not images:
+            print("❌ No valid images to build montage")
+            return False
+
+        music_duration = get_audio_duration(music_path)
+        if music_duration is None:
+            music_duration = MONTAGE_SECONDS_PER_IMAGE * len(images)
+        total_duration = min(music_duration, MONTAGE_MAX_DURATION)
+
+        fps = MONTAGE_FPS
+        frames_per_image = max(1, int(MONTAGE_SECONDS_PER_IMAGE * fps))
+        total_frames = max(frames_per_image, int(total_duration * fps))
+
+        print(f"🎬 Creating {total_frames} frames at {fps}fps across {len(images)} images...")
+
+        frames_dir = f'temp/montage_frames_{datetime.now().timestamp()}'
+        os.makedirs(frames_dir, exist_ok=True)
+
+        for frame_num in range(total_frames):
+            image_index = (frame_num // frames_per_image) % len(images)
+            local_progress = (frame_num % frames_per_image) / frames_per_image
+            frame = apply_ken_burns_zoom(images[image_index], local_progress)
+
+            overall_progress = frame_num / total_frames
+
+            if title:
+                title_alpha = min(1.0, max(0, 1.0 - overall_progress * 6))
+                if title_alpha > 0:
+                    add_text(frame, title, (MONTAGE_WIDTH // 2, 100), font_scale=1.3, alpha=title_alpha, color=(255, 255, 255))
+
+            if cta:
+                cta_alpha = min(1.0, max(0, (overall_progress - 0.8) * 5))
+                if cta_alpha > 0:
+                    add_text(frame, cta, (MONTAGE_WIDTH // 2, MONTAGE_HEIGHT - 140), font_scale=1.4, alpha=cta_alpha, color=(0, 100, 255))
+                    if link:
+                        add_text(frame, link, (MONTAGE_WIDTH // 2, MONTAGE_HEIGHT - 90), font_scale=0.9, alpha=cta_alpha, color=(255, 255, 255))
+
+            frame_path = f'{frames_dir}/frame_{frame_num:06d}.png'
+            cv2.imwrite(frame_path, frame)
+
+            if frame_num % 30 == 0:
+                print(f"  ✓ Frame {frame_num}/{total_frames}")
+
+        print("🎬 Assembling montage with FFmpeg...")
+
+        ffmpeg_cmd = [
+            'ffmpeg', '-y',
+            '-framerate', str(fps),
+            '-i', f'{frames_dir}/frame_%06d.png',
+            '-i', music_path,
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+            '-c:a', 'aac',
+            '-t', str(total_duration),
+            '-shortest',
+            output_path
+        ]
+
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print(f"❌ FFmpeg error: {result.stderr}")
+            return False
+
+        print(f"✅ Montage created: {output_path}")
+
+        import shutil
+        shutil.rmtree(frames_dir)
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Montage generation error: {e}")
+        return False
+
 def generate_script(title, features, cta):
     """Generate ad script"""
     script = f"Introducing {title}. "
