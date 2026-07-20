@@ -81,7 +81,7 @@ def generate_ad():
         
         # Generate video
         output_path = f'outputs/ad_{datetime.now().timestamp()}.mp4'
-        if not generate_video(image_path, audio_path, title, features, output_path):
+        if not generate_video(image_path, audio_path, title, features, cta, output_path):
             return jsonify({'error': 'Failed to generate video. Install FFmpeg'}), 500
         
         print(f"✅ Video generated: {output_path}")
@@ -102,10 +102,16 @@ def generate_ad():
 
 MONTAGE_WIDTH = 720
 MONTAGE_HEIGHT = 1280
-MONTAGE_FPS = 24
+MONTAGE_FPS = 12
 MONTAGE_SECONDS_PER_IMAGE = 0.5
-MONTAGE_MAX_DURATION = 20
+MONTAGE_MIN_DURATION = 25
+MONTAGE_MAX_DURATION = 30
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.aac', '.ogg'}
+
+CLASSIC_WIDTH = 1080
+CLASSIC_HEIGHT = 1920
+CLASSIC_MIN_DURATION = 25
+CLASSIC_MAX_DURATION = 30
 
 @app.route('/api/generate-montage', methods=['POST'])
 def generate_montage():
@@ -198,8 +204,8 @@ def generate_montage_video(image_paths, music_path, title, cta, link, output_pat
 
         music_duration = get_audio_duration(music_path)
         if music_duration is None:
-            music_duration = MONTAGE_SECONDS_PER_IMAGE * len(images)
-        total_duration = min(music_duration, MONTAGE_MAX_DURATION)
+            music_duration = MONTAGE_MIN_DURATION
+        total_duration = max(MONTAGE_MIN_DURATION, min(music_duration, MONTAGE_MAX_DURATION))
 
         fps = MONTAGE_FPS
         frames_per_image = max(1, int(MONTAGE_SECONDS_PER_IMAGE * fps))
@@ -241,13 +247,13 @@ def generate_montage_video(image_paths, music_path, title, cta, link, output_pat
             'ffmpeg', '-y',
             '-framerate', str(fps),
             '-i', f'{frames_dir}/frame_%06d.png',
+            '-stream_loop', '-1',
             '-i', music_path,
             '-c:v', 'libx264',
             '-pix_fmt', 'yuv420p',
             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
             '-c:a', 'aac',
             '-t', str(total_duration),
-            '-shortest',
             output_path
         ]
 
@@ -294,63 +300,71 @@ def generate_audio(text, output_path):
         print(f"❌ Audio generation error: {e}")
         return False
 
-def generate_video(image_path, audio_path, title, features, output_path):
+def generate_video(image_path, audio_path, title, features, cta, output_path):
     """Generate video using FFmpeg"""
     try:
-        # Read image
-        img = cv2.imread(image_path)
-        if img is None:
+        # Read image and standardize to a vertical 9:16 canvas (best format
+        # for TikTok/Reels/Shorts placement, matches the montage mode)
+        raw_img = cv2.imread(image_path)
+        if raw_img is None:
             print("❌ Failed to read image")
             return False
-        
-        height, width = img.shape[:2]
-        
+
+        img = resize_cover(raw_img, CLASSIC_WIDTH, CLASSIC_HEIGHT)
+        width, height = CLASSIC_WIDTH, CLASSIC_HEIGHT
+
         # Create video frames with text overlays
         frames_dir = f'temp/frames_{datetime.now().timestamp()}'
         os.makedirs(frames_dir, exist_ok=True)
-        
-        # Get audio duration
+
+        # Get audio duration and clamp the video to a 25-30s window,
+        # which performs best for completion rate on short-form platforms
         audio_duration = get_audio_duration(audio_path)
         if audio_duration is None:
-            audio_duration = 40
-        
-        fps = 30
-        total_frames = int(audio_duration * fps)
-        
+            audio_duration = CLASSIC_MIN_DURATION
+        total_duration = max(CLASSIC_MIN_DURATION, min(audio_duration, CLASSIC_MAX_DURATION))
+
+        fps = 15
+        total_frames = int(total_duration * fps)
+
+        cta_text = cta.strip() if cta and cta.strip() else 'Order Now!'
+
         print(f"🎬 Creating {total_frames} frames at {fps}fps...")
-        
+
         # Create frames
         for frame_num in range(total_frames):
             frame = img.copy()
             progress = frame_num / total_frames
-            
+
             # Add title with fade-in effect
             alpha = min(1.0, progress * 3)  # Fade in over first 1/3
             if alpha > 0:
                 add_text(frame, title, (width//2, 100), font_scale=2, alpha=alpha, color=(255, 255, 255))
-            
+
             # Add features with sliding effect
             feature_alpha = min(1.0, max(0, (progress - 0.2) * 2))
             if feature_alpha > 0:
                 y_pos = 250
                 for i, feature in enumerate(features[:3]):
                     add_text(frame, f"• {feature}", (100, y_pos + i*60), font_scale=1.2, alpha=feature_alpha, color=(0, 255, 100))
-            
+
             # Add CTA at end
             cta_alpha = min(1.0, max(0, (progress - 0.7) * 3))
             if cta_alpha > 0:
-                add_text(frame, "Order Now!", (width//2, height - 100), font_scale=2, alpha=cta_alpha, color=(0, 100, 255))
-            
+                add_text(frame, cta_text, (width//2, height - 100), font_scale=2, alpha=cta_alpha, color=(0, 100, 255))
+
             # Save frame
             frame_path = f'{frames_dir}/frame_{frame_num:06d}.png'
             cv2.imwrite(frame_path, frame)
-            
+
             if frame_num % 30 == 0:
                 print(f"  ✓ Frame {frame_num}/{total_frames}")
-        
+
         print("🎬 Assembling video with FFmpeg...")
-        
-        # Use FFmpeg to create video
+
+        # Use FFmpeg to create video. Audio is padded with silence (apad) if
+        # shorter than the video and the whole output is capped at
+        # total_duration, so the final length always lands in the 25-30s window.
         ffmpeg_cmd = [
             'ffmpeg', '-y',
             '-framerate', str(fps),
@@ -359,11 +373,12 @@ def generate_video(image_path, audio_path, title, features, output_path):
             '-c:v', 'libx264',
             '-pix_fmt', 'yuv420p',
             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+            '-af', 'apad',
             '-c:a', 'aac',
-            '-shortest',
+            '-t', str(total_duration),
             output_path
         ]
-        
+
         result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
