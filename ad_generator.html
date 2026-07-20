@@ -66,6 +66,7 @@
         let adMode = 'classic';
         let montageData = {
             title: '',
+            features: '',
             cta: 'Shop Now',
             link: 'rizzova.com',
             images: [],
@@ -117,6 +118,7 @@
                 montageData.images.forEach(img => formDataObj.append('images', img));
                 formDataObj.append('music', montageData.music);
                 formDataObj.append('title', montageData.title);
+                formDataObj.append('features', montageData.features);
                 formDataObj.append('cta', montageData.cta);
                 formDataObj.append('link', montageData.link);
 
@@ -444,13 +446,24 @@
 
                                         <!-- On-screen Title -->
                                         <div>
-                                            <label class="block text-sm font-bold mb-2">On-screen Title (optional)</label>
+                                            <label class="block text-sm font-bold mb-2">On-screen Title / Hook (optional)</label>
                                             <input type="text"
                                                 placeholder="e.g., Amazing Headphones"
                                                 value="${montageData.title}"
                                                 onchange="montageData.title = this.value"
                                                 class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none"
                                             />
+                                        </div>
+
+                                        <!-- Key Features -->
+                                        <div>
+                                            <label class="block text-sm font-bold mb-2">Key Features (optional, comma separated — shown as clean slides, up to 3)</label>
+                                            <textarea
+                                                placeholder="e.g., Non-Slip Grip, Dishwasher Safe, BPA Free"
+                                                rows="3"
+                                                onchange="montageData.features = this.value"
+                                                class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none resize-none"
+                                            >${montageData.features}</textarea>
                                         </div>
 
                                         <!-- On-screen CTA -->
