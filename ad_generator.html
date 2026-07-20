@@ -63,6 +63,94 @@
         };
         let isGenerating = false;
 
+        let adMode = 'classic';
+        let montageData = {
+            title: '',
+            cta: 'Shop Now',
+            link: 'rizzova.com',
+            images: [],
+            imagePreviews: [],
+            music: null,
+            musicName: ''
+        };
+
+        function switchMode(mode) {
+            adMode = mode;
+            render();
+        }
+
+        function handleMontageImagesUpload(e) {
+            const files = Array.from(e.target.files);
+            montageData.images = files;
+            montageData.imagePreviews = [];
+            render();
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    montageData.imagePreviews.push(event.target.result);
+                    render();
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function handleMusicUpload(e) {
+            const file = e.target.files[0];
+            if (file) {
+                montageData.music = file;
+                montageData.musicName = file.name;
+                render();
+            }
+        }
+
+        async function generateMontage() {
+            try {
+                if (montageData.images.length === 0 || !montageData.music) {
+                    alert('❌ Please upload at least one image and a music track');
+                    return;
+                }
+
+                isGenerating = true;
+                render();
+
+                const formDataObj = new FormData();
+                montageData.images.forEach(img => formDataObj.append('images', img));
+                formDataObj.append('music', montageData.music);
+                formDataObj.append('title', montageData.title);
+                formDataObj.append('cta', montageData.cta);
+                formDataObj.append('link', montageData.link);
+
+                console.log('🚀 Sending montage request to backend...');
+
+                const response = await fetch(`${API_BASE}/generate-montage`, {
+                    method: 'POST',
+                    body: formDataObj
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Failed to generate montage');
+                }
+
+                console.log('✅ Montage generated!', result);
+                currentPage = 'success';
+                formData.videoUrl = `${BACKEND_ORIGIN}${result.video_url}`;
+                isGenerating = false;
+                render();
+
+                setTimeout(() => {
+                    window.location.href = formData.videoUrl;
+                }, 2000);
+
+            } catch (error) {
+                console.error('❌ Error:', error);
+                alert('❌ Error: ' + error.message);
+                isGenerating = false;
+                render();
+            }
+        }
+
         async function generateAd() {
             try {
                 if (!formData.title || !formData.features || !formData.image) {
@@ -201,8 +289,19 @@
 
                         <!-- Main Content -->
                         <div class="max-w-6xl mx-auto px-8 py-16">
-                            <h1 class="text-4xl font-bold text-center mb-16">Create Your Product Ad</h1>
+                            <h1 class="text-4xl font-bold text-center mb-8">Create Your Product Ad</h1>
 
+                            <!-- Mode Switcher -->
+                            <div class="flex justify-center gap-4 mb-16">
+                                <button onclick="switchMode('classic')" class="px-6 py-3 rounded-lg font-bold transition ${adMode === 'classic' ? 'bg-purple-600 text-white shadow-lg' : 'bg-white text-gray-600 border-2 border-gray-200'}">
+                                    🎬 Classic Ad
+                                </button>
+                                <button onclick="switchMode('montage')" class="px-6 py-3 rounded-lg font-bold transition ${adMode === 'montage' ? 'bg-purple-600 text-white shadow-lg' : 'bg-white text-gray-600 border-2 border-gray-200'}">
+                                    ⚡ UGC Montage
+                                </button>
+                            </div>
+
+                            ${adMode === 'classic' ? `
                             <div class="grid md:grid-cols-2 gap-12">
                                 <!-- Form -->
                                 <div class="bg-white p-8 rounded-lg shadow-lg">
@@ -212,8 +311,8 @@
                                         <!-- Product Title -->
                                         <div>
                                             <label class="block text-sm font-bold mb-2">Product Name *</label>
-                                            <input type="text" 
-                                                placeholder="e.g., Amazing Headphones" 
+                                            <input type="text"
+                                                placeholder="e.g., Amazing Headphones"
                                                 value="${formData.title}"
                                                 onchange="formData.title = this.value"
                                                 class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none"
@@ -223,7 +322,7 @@
                                         <!-- Features -->
                                         <div>
                                             <label class="block text-sm font-bold mb-2">Key Features * (comma separated)</label>
-                                            <textarea 
+                                            <textarea
                                                 placeholder="e.g., Noise Cancelling, 30hr Battery, Premium Sound"
                                                 rows="4"
                                                 onchange="formData.features = this.value"
@@ -234,8 +333,8 @@
                                         <!-- CTA -->
                                         <div>
                                             <label class="block text-sm font-bold mb-2">Call to Action</label>
-                                            <input type="text" 
-                                                placeholder="e.g., Order Now, Buy Today, Get Yours" 
+                                            <input type="text"
+                                                placeholder="e.g., Order Now, Buy Today, Get Yours"
                                                 value="${formData.cta}"
                                                 onchange="formData.cta = this.value"
                                                 class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none"
@@ -246,7 +345,7 @@
                                         <div>
                                             <label class="block text-sm font-bold mb-2">Product Image *</label>
                                             <div class="border-2 border-dashed border-purple-300 rounded-lg p-8 text-center cursor-pointer hover:border-purple-600 transition">
-                                                <input type="file" 
+                                                <input type="file"
                                                     accept="image/*"
                                                     onchange="handleImageUpload(event)"
                                                     class="hidden"
@@ -262,7 +361,7 @@
                                         </div>
 
                                         <!-- Generate Button -->
-                                        <button 
+                                        <button
                                             onclick="generateAd()"
                                             ${isGenerating ? 'disabled' : ''}
                                             class="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold text-lg rounded-lg hover:shadow-lg transition ${isGenerating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
@@ -276,7 +375,7 @@
                                 <div>
                                     <h2 class="text-2xl font-bold mb-6">Preview</h2>
                                     <div class="preview-box">
-                                        ${formData.imagePreview 
+                                        ${formData.imagePreview
                                             ? `<img src="${formData.imagePreview}" class="preview-image" />`
                                             : `<div class="flex items-center justify-center h-full text-white text-center"><div>
                                                 <div class="text-6xl mb-4">🖼️</div>
@@ -297,6 +396,127 @@
                                     </div>
                                 </div>
                             </div>
+                            ` : `
+                            <div class="grid md:grid-cols-2 gap-12">
+                                <!-- Montage Form -->
+                                <div class="bg-white p-8 rounded-lg shadow-lg">
+                                    <h2 class="text-2xl font-bold mb-6">Montage Details</h2>
+
+                                    <div class="space-y-6">
+                                        <!-- Product Photos -->
+                                        <div>
+                                            <label class="block text-sm font-bold mb-2">Product Photos * (multiple, fast-cut style)</label>
+                                            <div class="border-2 border-dashed border-purple-300 rounded-lg p-8 text-center cursor-pointer hover:border-purple-600 transition">
+                                                <input type="file"
+                                                    accept="image/*"
+                                                    multiple
+                                                    onchange="handleMontageImagesUpload(event)"
+                                                    class="hidden"
+                                                    id="montageImagesInput"
+                                                />
+                                                <label for="montageImagesInput" class="cursor-pointer">
+                                                    <div class="text-4xl mb-2">📸</div>
+                                                    <p class="text-gray-600">Click to upload several photos</p>
+                                                    <p class="text-sm text-gray-500 mt-2">Close-up shots work best for fast cuts</p>
+                                                </label>
+                                            </div>
+                                            ${montageData.images.length > 0 ? `<p class="text-green-600 mt-2">✅ ${montageData.images.length} image(s) selected</p>` : ''}
+                                        </div>
+
+                                        <!-- Music Upload -->
+                                        <div>
+                                            <label class="block text-sm font-bold mb-2">Background Music * (your own royalty-free track)</label>
+                                            <div class="border-2 border-dashed border-purple-300 rounded-lg p-8 text-center cursor-pointer hover:border-purple-600 transition">
+                                                <input type="file"
+                                                    accept="audio/*"
+                                                    onchange="handleMusicUpload(event)"
+                                                    class="hidden"
+                                                    id="musicInput"
+                                                />
+                                                <label for="musicInput" class="cursor-pointer">
+                                                    <div class="text-4xl mb-2">🎵</div>
+                                                    <p class="text-gray-600">Click to upload music</p>
+                                                    <p class="text-sm text-gray-500 mt-2">MP3, WAV, M4A — you must own the rights to it</p>
+                                                </label>
+                                            </div>
+                                            ${montageData.musicName ? `<p class="text-green-600 mt-2">✅ ${montageData.musicName}</p>` : ''}
+                                        </div>
+
+                                        <!-- On-screen Title -->
+                                        <div>
+                                            <label class="block text-sm font-bold mb-2">On-screen Title (optional)</label>
+                                            <input type="text"
+                                                placeholder="e.g., Amazing Headphones"
+                                                value="${montageData.title}"
+                                                onchange="montageData.title = this.value"
+                                                class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none"
+                                            />
+                                        </div>
+
+                                        <!-- On-screen CTA -->
+                                        <div>
+                                            <label class="block text-sm font-bold mb-2">On-screen CTA (optional)</label>
+                                            <input type="text"
+                                                placeholder="e.g., Shop Now, Link in Bio"
+                                                value="${montageData.cta}"
+                                                onchange="montageData.cta = this.value"
+                                                class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none"
+                                            />
+                                        </div>
+
+                                        <!-- Store Link -->
+                                        <div>
+                                            <label class="block text-sm font-bold mb-2">Store Link (shown as text under CTA — videos can't have real clickable links)</label>
+                                            <input type="text"
+                                                placeholder="e.g., yourstore.com"
+                                                value="${montageData.link}"
+                                                onchange="montageData.link = this.value"
+                                                class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none"
+                                            />
+                                        </div>
+
+                                        <!-- Generate Button -->
+                                        <button
+                                            onclick="generateMontage()"
+                                            ${isGenerating ? 'disabled' : ''}
+                                            class="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold text-lg rounded-lg hover:shadow-lg transition ${isGenerating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
+                                        >
+                                            ${isGenerating ? '<div class="flex items-center justify-center gap-2"><div class="spinner"></div>Creating Your Montage...</div>' : '⚡ Generate Fast-Cut Montage'}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Preview -->
+                                <div>
+                                    <h2 class="text-2xl font-bold mb-6">Preview</h2>
+                                    <div class="preview-box" style="aspect-ratio: 9/16; max-width: 280px; margin: 0 auto;">
+                                        ${montageData.imagePreviews.length > 0
+                                            ? `<img src="${montageData.imagePreviews[0]}" class="preview-image" />`
+                                            : `<div class="flex items-center justify-center h-full text-white text-center"><div>
+                                                <div class="text-6xl mb-4">⚡</div>
+                                                <p>Upload photos to preview</p>
+                                            </div></div>`
+                                        }
+                                    </div>
+                                    ${montageData.imagePreviews.length > 1 ? `
+                                    <div class="flex gap-2 mt-4 flex-wrap justify-center">
+                                        ${montageData.imagePreviews.slice(1).map(src => `<img src="${src}" class="w-16 h-16 object-cover rounded-lg" />`).join('')}
+                                    </div>
+                                    ` : ''}
+
+                                    <div class="mt-8 bg-blue-50 p-6 rounded-lg border-l-4 border-blue-500">
+                                        <h3 class="font-bold text-blue-900 mb-2">📝 How It Works:</h3>
+                                        <ol class="text-sm text-blue-800 space-y-2 list-decimal list-inside">
+                                            <li>Upload several close-up product photos</li>
+                                            <li>Upload a royalty-free music track you have rights to</li>
+                                            <li>Optionally add an on-screen title & CTA</li>
+                                            <li>Click Generate</li>
+                                            <li>Get a fast-cut, music-synced montage video</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                            `}
                         </div>
                     </div>
                 `;
