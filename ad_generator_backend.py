@@ -111,7 +111,6 @@ MONTAGE_TITLE_SECONDS = 2.6
 MONTAGE_FEATURES_SLIDE_SECONDS = 5.0
 MONTAGE_CTA_SLIDE_SECONDS = 3.5
 MONTAGE_MAX_FEATURES = 3
-MONTAGE_PHOTO_MAX_ZOOM = 0.06
 SLIDE_GRADIENT_TOP = (234, 126, 102)     # BGR for #667eea
 SLIDE_GRADIENT_BOTTOM = (162, 75, 118)   # BGR for #764ba2
 FEATURE_CTA_BG_TOP = (61, 27, 42)        # BGR for #2A1B3D, dark purple (matches brand logo)
@@ -208,17 +207,6 @@ def resize_contain_blurred(img, target_w, target_h):
     frame = bg
     frame[y0:y0 + new_h, x0:x0 + new_w] = fitted
     return frame
-
-def apply_ken_burns_zoom(img, local_progress, max_zoom=0.15):
-    """Crop progressively tighter toward center to simulate a zoom-in."""
-    h, w = img.shape[:2]
-    zoom = 1.0 + max_zoom * local_progress
-    crop_w = int(w / zoom)
-    crop_h = int(h / zoom)
-    x0 = (w - crop_w) // 2
-    y0 = (h - crop_h) // 2
-    cropped = img[y0:y0 + crop_h, x0:x0 + crop_w]
-    return cv2.resize(cropped, (w, h))
 
 def make_gradient_bg(width, height, top_color, bottom_color):
     """Solid vertical gradient background for text slides."""
@@ -453,12 +441,14 @@ def generate_montage_video(image_paths, music_path, title, features, cta, link, 
             slot = i // frames_per_image
             image_index = slot % num_images
             pos_in_slot = i % frames_per_image
-            local_progress = pos_in_slot / frames_per_image
-            frame = apply_ken_burns_zoom(images[image_index], local_progress, max_zoom=MONTAGE_PHOTO_MAX_ZOOM)
+            # Static hold, no per-photo zoom reset - the only motion is the crossfade
+            # dissolve itself, which reads as a clean, consistent, professional switch
+            # instead of a jarring zoom-then-cut.
+            frame = images[image_index]
 
             if do_photo_crossfade and slot > 0 and pos_in_slot < transition_frames:
                 prev_index = (image_index - 1) % num_images
-                prev_frame = apply_ken_burns_zoom(images[prev_index], 1.0, max_zoom=MONTAGE_PHOTO_MAX_ZOOM)
+                prev_frame = images[prev_index]
                 blend = (pos_in_slot + 1) / transition_frames
                 frame = cv2.addWeighted(frame, blend, prev_frame, 1 - blend, 0)
             return frame
