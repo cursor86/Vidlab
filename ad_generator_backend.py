@@ -231,7 +231,7 @@ def fit_font_scale(text, max_width, base_scale, font=cv2.FONT_HERSHEY_SIMPLEX, t
         scale -= 0.1
     return min_scale
 
-def draw_centered_text(frame, text, y, max_width_ratio=0.85, base_scale=1.4, color=(255, 255, 255), alpha=1.0, thickness=2):
+def draw_centered_text(frame, text, y, max_width_ratio=0.85, base_scale=1.4, color=(255, 255, 255), alpha=1.0, thickness=2, outline=True):
     """Draw horizontally-centered text, auto-shrinking to fit within the frame width."""
     if not text or alpha <= 0:
         return
@@ -242,6 +242,8 @@ def draw_centered_text(frame, text, y, max_width_ratio=0.85, base_scale=1.4, col
     text_size = cv2.getTextSize(text, font, scale, thickness)[0]
     x = (width - text_size[0]) // 2
     overlay = frame.copy()
+    if outline:
+        cv2.putText(overlay, text, (x, y), font, scale, (0, 0, 0), thickness + 3, cv2.LINE_AA)
     cv2.putText(overlay, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
     cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
 
@@ -293,16 +295,6 @@ def draw_wrapped_centered_text(frame, text, center_y, max_width_ratio=0.82, base
         y = start_y + i * gap
         cv2.putText(overlay, line, (x, y), font, scale, (0, 0, 0), thickness + 3, cv2.LINE_AA)
         cv2.putText(overlay, line, (x, y), font, scale, color, thickness, cv2.LINE_AA)
-    cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
-
-def draw_left_text(frame, text, x, y, max_width, base_scale=1.2, color=(255, 255, 255), alpha=1.0, thickness=2):
-    """Draw left-aligned text starting at x, auto-shrinking to fit within max_width."""
-    if not text or alpha <= 0:
-        return
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = fit_font_scale(text, max_width, base_scale, font, thickness)
-    overlay = frame.copy()
-    cv2.putText(overlay, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
     cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
 
 def generate_montage_video(image_paths, music_path, title, features, cta, link, output_path):
@@ -458,7 +450,7 @@ def generate_video(image_path, audio_path, title, features, cta, output_path):
             print("❌ Failed to read image")
             return False
 
-        img = resize_cover(raw_img, CLASSIC_WIDTH, CLASSIC_HEIGHT)
+        img = resize_contain_blurred(raw_img, CLASSIC_WIDTH, CLASSIC_HEIGHT)
         width, height = CLASSIC_WIDTH, CLASSIC_HEIGHT
 
         # Create video frames with text overlays
@@ -484,23 +476,24 @@ def generate_video(image_path, audio_path, title, features, cta, output_path):
             frame = img.copy()
             progress = frame_num / total_frames
 
-            # Add title with fade-in effect
+            # Add title with fade-in effect, short and prominent like a hero headline
             alpha = min(1.0, progress * 3)  # Fade in over first 1/3
             if alpha > 0:
-                draw_centered_text(frame, title, 110, base_scale=2, color=(255, 255, 255), alpha=alpha, thickness=3)
+                draw_wrapped_centered_text(frame, title, int(height * 0.16), base_scale=2.4,
+                                            color=(255, 255, 255), alpha=alpha, thickness=4, max_lines=2)
 
-            # Add features with sliding effect
+            # Add features, one clean centered line each, like feature callouts
             feature_alpha = min(1.0, max(0, (progress - 0.2) * 2))
             if feature_alpha > 0:
-                y_pos = 260
-                feature_max_width = width - 160
+                y_pos = int(height * 0.30)
                 for i, feature in enumerate(features[:3]):
-                    draw_left_text(frame, f"• {feature}", 100, y_pos + i*70, feature_max_width, base_scale=1.3, color=(0, 255, 100), alpha=feature_alpha, thickness=2)
+                    draw_centered_text(frame, f"✓ {feature}", y_pos + i * 90, base_scale=1.5,
+                                        color=(0, 255, 100), alpha=feature_alpha, thickness=3)
 
             # Add CTA at end
             cta_alpha = min(1.0, max(0, (progress - 0.7) * 3))
             if cta_alpha > 0:
-                draw_centered_text(frame, cta_text, height - 110, base_scale=2, color=(0, 100, 255), alpha=cta_alpha, thickness=3)
+                draw_centered_text(frame, cta_text, height - 110, base_scale=2, color=(0, 150, 255), alpha=cta_alpha, thickness=3)
 
             # Save frame
             frame_path = f'{frames_dir}/frame_{frame_num:06d}.png'
