@@ -184,6 +184,25 @@ def resize_cover(img, target_w, target_h):
     y0 = (new_h - target_h) // 2
     return resized[y0:y0 + target_h, x0:x0 + target_w]
 
+def resize_contain_blurred(img, target_w, target_h):
+    """Fit the whole image inside the frame with no cropping, centered over a
+    softly blurred, dimmed version of itself so there are no dead bars."""
+    h, w = img.shape[:2]
+
+    bg = resize_cover(img, target_w, target_h)
+    bg = cv2.GaussianBlur(bg, (0, 0), sigmaX=35)
+    bg = (bg.astype(np.float32) * 0.5).astype(np.uint8)
+
+    scale = min(target_w / w, target_h / h)
+    new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+    fitted = cv2.resize(img, (new_w, new_h))
+
+    x0 = (target_w - new_w) // 2
+    y0 = (target_h - new_h) // 2
+    frame = bg
+    frame[y0:y0 + new_h, x0:x0 + new_w] = fitted
+    return frame
+
 def apply_ken_burns_zoom(img, local_progress, max_zoom=0.15):
     """Crop progressively tighter toward center to simulate a zoom-in."""
     h, w = img.shape[:2]
@@ -226,6 +245,56 @@ def draw_centered_text(frame, text, y, max_width_ratio=0.85, base_scale=1.4, col
     cv2.putText(overlay, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
     cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
 
+def wrap_text_lines(text, font, scale, thickness, max_width):
+    """Greedily wrap text into lines that each fit within max_width."""
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        trial = f"{current} {word}".strip()
+        if cv2.getTextSize(trial, font, scale, thickness)[0][0] <= max_width or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+def draw_wrapped_centered_text(frame, text, center_y, max_width_ratio=0.82, base_scale=1.7,
+                                color=(255, 255, 255), alpha=1.0, thickness=3, max_lines=2,
+                                min_scale=0.7, line_spacing=1.35):
+    """Draw short, prominent title text centered on the frame (both axes), wrapping onto
+    a couple of lines instead of shrinking illegibly small, with a dark outline so it stays
+    readable over any photo."""
+    if not text or alpha <= 0:
+        return
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    width = frame.shape[1]
+    max_width = int(width * max_width_ratio)
+
+    scale = base_scale
+    lines = wrap_text_lines(text, font, scale, thickness, max_width)
+    while scale > min_scale and (len(lines) > max_lines or
+                                  any(cv2.getTextSize(l, font, scale, thickness)[0][0] > max_width for l in lines)):
+        scale -= 0.1
+        lines = wrap_text_lines(text, font, scale, thickness, max_width)
+    lines = lines[:max_lines]
+
+    line_height = cv2.getTextSize("Ag", font, scale, thickness)[0][1]
+    gap = int(line_height * line_spacing)
+    total_h = gap * (len(lines) - 1)
+    start_y = int(center_y - total_h / 2)
+
+    overlay = frame.copy()
+    for i, line in enumerate(lines):
+        size = cv2.getTextSize(line, font, scale, thickness)[0]
+        x = (width - size[0]) // 2
+        y = start_y + i * gap
+        cv2.putText(overlay, line, (x, y), font, scale, (0, 0, 0), thickness + 3, cv2.LINE_AA)
+        cv2.putText(overlay, line, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+    cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
+
 def draw_left_text(frame, text, x, y, max_width, base_scale=1.2, color=(255, 255, 255), alpha=1.0, thickness=2):
     """Draw left-aligned text starting at x, auto-shrinking to fit within max_width."""
     if not text or alpha <= 0:
@@ -245,7 +314,7 @@ def generate_montage_video(image_paths, music_path, title, features, cta, link, 
             if img is None:
                 print(f"❌ Failed to read image: {p}")
                 continue
-            images.append(resize_cover(img, MONTAGE_WIDTH, MONTAGE_HEIGHT))
+            images.append(resize_contain_blurred(img, MONTAGE_WIDTH, MONTAGE_HEIGHT))
 
         if not images:
             print("❌ No valid images to build montage")
@@ -286,7 +355,8 @@ def generate_montage_video(image_paths, music_path, title, features, cta, link, 
             if title and i < title_frames:
                 title_progress = i / title_frames
                 title_alpha = min(1.0, max(0, 1.0 - title_progress * 1.3))
-                draw_centered_text(frame, title, 110, base_scale=1.3, color=(255, 255, 255), alpha=title_alpha, thickness=3)
+                draw_wrapped_centered_text(frame, title, int(MONTAGE_HEIGHT * 0.38), base_scale=1.8,
+                                            color=(255, 255, 255), alpha=title_alpha, thickness=3, max_lines=2)
 
             cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
             frame_num += 1
