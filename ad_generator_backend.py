@@ -114,6 +114,9 @@ MONTAGE_MAX_FEATURES = 3
 MONTAGE_PHOTO_MAX_ZOOM = 0.06
 SLIDE_GRADIENT_TOP = (234, 126, 102)     # BGR for #667eea
 SLIDE_GRADIENT_BOTTOM = (162, 75, 118)   # BGR for #764ba2
+FEATURE_CTA_BG_TOP = (61, 27, 42)        # BGR for #2A1B3D, dark purple (matches brand logo)
+FEATURE_CTA_BG_BOTTOM = (34, 15, 23)     # BGR for #170F22, darker purple
+GOLD_COLOR = (55, 175, 212)              # BGR for #D4AF37
 LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'rizzova_logo.png')
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.aac', '.ogg'}
 
@@ -424,6 +427,7 @@ def generate_montage_video(image_paths, music_path, title, features, cta, link, 
         os.makedirs(frames_dir, exist_ok=True)
 
         slide_bg = make_gradient_bg(MONTAGE_WIDTH, MONTAGE_HEIGHT, SLIDE_GRADIENT_TOP, SLIDE_GRADIENT_BOTTOM)
+        gold_slide_bg = make_gradient_bg(MONTAGE_WIDTH, MONTAGE_HEIGHT, FEATURE_CTA_BG_TOP, FEATURE_CTA_BG_BOTTOM)
         logo = load_logo()
         num_images = len(images)
         do_photo_crossfade = num_images > 1 and transition_frames > 0
@@ -460,21 +464,22 @@ def generate_montage_video(image_paths, music_path, title, features, cta, link, 
             return frame
 
         def render_features(j, length):
-            frame = slide_bg.copy()
+            frame = gold_slide_bg.copy()
             local_progress = j / length
             alpha = min(1.0, local_progress * 4)
             draw_bullet_list(frame, features, int(MONTAGE_HEIGHT * 0.46), base_scale=3.0,
-                              color=(255, 255, 255), alpha=alpha, thickness=5)
+                              color=GOLD_COLOR, alpha=alpha, thickness=5)
             return frame
 
         def render_cta(j, length):
-            frame = slide_bg.copy()
+            frame = gold_slide_bg.copy()
             local_progress = j / length
             alpha = min(1.0, local_progress * 4)
             if cta:
-                draw_cta_button(frame, cta, MONTAGE_HEIGHT // 2 - 90, alpha=alpha, base_scale=1.7)
+                draw_cta_button(frame, cta, MONTAGE_HEIGHT // 2 - 90, alpha=alpha, base_scale=1.7,
+                                 text_color=FEATURE_CTA_BG_BOTTOM, button_color=GOLD_COLOR)
             if link:
-                draw_centered_text(frame, link, MONTAGE_HEIGHT // 2 + 10, base_scale=1.0, color=(230, 230, 230), alpha=alpha, thickness=2)
+                draw_centered_text(frame, link, MONTAGE_HEIGHT // 2 + 10, base_scale=1.0, color=GOLD_COLOR, alpha=alpha, thickness=2)
             draw_logo(frame, logo, int(MONTAGE_HEIGHT * 0.72), alpha=alpha)
             return frame
 
