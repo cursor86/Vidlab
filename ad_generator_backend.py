@@ -103,13 +103,15 @@ def generate_ad():
 MONTAGE_WIDTH = 720
 MONTAGE_HEIGHT = 1280
 MONTAGE_FPS = 12
-MONTAGE_SECONDS_PER_IMAGE = 0.5
+MONTAGE_SECONDS_PER_IMAGE = 2.2
+MONTAGE_PHOTO_CROSSFADE_SECONDS = 0.4
 MONTAGE_MIN_DURATION = 25
 MONTAGE_MAX_DURATION = 30
-MONTAGE_TITLE_SECONDS = 2.5
-MONTAGE_FEATURE_SLIDE_SECONDS = 1.8
-MONTAGE_CTA_SLIDE_SECONDS = 3.0
+MONTAGE_TITLE_SECONDS = 2.6
+MONTAGE_FEATURE_SLIDE_SECONDS = 2.6
+MONTAGE_CTA_SLIDE_SECONDS = 3.2
 MONTAGE_MAX_FEATURES = 3
+MONTAGE_PHOTO_MAX_ZOOM = 0.06
 SLIDE_GRADIENT_TOP = (234, 126, 102)     # BGR for #667eea
 SLIDE_GRADIENT_BOTTOM = (162, 75, 118)   # BGR for #764ba2
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.aac', '.ogg'}
@@ -297,8 +299,29 @@ def draw_wrapped_centered_text(frame, text, center_y, max_width_ratio=0.82, base
         cv2.putText(overlay, line, (x, y), font, scale, color, thickness, cv2.LINE_AA)
     cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
 
+def draw_cta_button(frame, text, center_y, alpha=1.0, base_scale=1.7, text_color=(20, 20, 20),
+                     button_color=(80, 200, 255), thickness=3, pad_x=55, pad_y=28):
+    """Draw text on a solid pill-style button instead of bare on the background, so the
+    call-to-action reads as a real button rather than floating text."""
+    if not text or alpha <= 0:
+        return
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    width = frame.shape[1]
+    max_width = int(width * 0.78)
+    scale = fit_font_scale(text, max_width, base_scale, font, thickness)
+    (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+    x = (width - tw) // 2
+
+    overlay = frame.copy()
+    rect_x0, rect_y0 = x - pad_x, center_y - th - pad_y
+    rect_x1, rect_y1 = x + tw + pad_x, center_y + baseline + pad_y // 2
+    cv2.rectangle(overlay, (rect_x0, rect_y0), (rect_x1, rect_y1), button_color, -1, cv2.LINE_AA)
+    cv2.putText(overlay, text, (x, center_y), font, scale, text_color, thickness, cv2.LINE_AA)
+    cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
+
 def generate_montage_video(image_paths, music_path, title, features, cta, link, output_path):
-    """Generate a structured montage: fast-cut hook photos -> feature slides -> CTA end card, synced to music."""
+    """Generate a structured montage: title card -> slow, crossfaded product photos ->
+    feature slides -> CTA end card, synced to music."""
     try:
         images = []
         for p in image_paths:
@@ -321,15 +344,16 @@ def generate_montage_video(image_paths, music_path, title, features, cta, link, 
 
         fps = MONTAGE_FPS
         frames_per_image = max(1, int(MONTAGE_SECONDS_PER_IMAGE * fps))
-        title_frames = int(MONTAGE_TITLE_SECONDS * fps)
+        crossfade_frames = min(int(MONTAGE_PHOTO_CROSSFADE_SECONDS * fps), frames_per_image // 2)
+        title_card_frames = int(MONTAGE_TITLE_SECONDS * fps)
         cta_frames = int(MONTAGE_CTA_SLIDE_SECONDS * fps)
         feature_frames_each = int(MONTAGE_FEATURE_SLIDE_SECONDS * fps)
         feature_total_frames = feature_frames_each * len(features)
 
-        total_frames = max(frames_per_image + cta_frames, int(total_duration * fps))
-        photo_frames = max(frames_per_image, total_frames - cta_frames - feature_total_frames)
+        total_frames = max(title_card_frames + frames_per_image + cta_frames, int(total_duration * fps))
+        photo_frames = max(frames_per_image, total_frames - title_card_frames - cta_frames - feature_total_frames)
 
-        print(f"🎬 Building montage: {photo_frames} hook-photo frames, "
+        print(f"🎬 Building montage: {title_card_frames} title-card frames, {photo_frames} photo frames, "
               f"{feature_total_frames} feature-slide frames, {cta_frames} CTA frames at {fps}fps")
 
         frames_dir = f'temp/montage_frames_{datetime.now().timestamp()}'
@@ -338,44 +362,67 @@ def generate_montage_video(image_paths, music_path, title, features, cta, link, 
         slide_bg = make_gradient_bg(MONTAGE_WIDTH, MONTAGE_HEIGHT, SLIDE_GRADIENT_TOP, SLIDE_GRADIENT_BOTTOM)
         frame_num = 0
 
-        # --- Segment 1: fast-cut hook photos, with the title held on top for a few seconds ---
-        for i in range(photo_frames):
-            image_index = (i // frames_per_image) % len(images)
-            local_progress = (i % frames_per_image) / frames_per_image
-            frame = apply_ken_burns_zoom(images[image_index], local_progress)
+        # --- Segment 1: dedicated title/hook card, clean background, no photo competing for attention ---
+        if title:
+            for j in range(title_card_frames):
+                frame = slide_bg.copy()
+                local_progress = j / title_card_frames
+                if local_progress < 0.25:
+                    alpha = local_progress / 0.25
+                elif local_progress > 0.8:
+                    alpha = max(0, (1.0 - local_progress) / 0.2)
+                else:
+                    alpha = 1.0
+                draw_wrapped_centered_text(frame, title, int(MONTAGE_HEIGHT * 0.42), base_scale=2.0,
+                                            color=(255, 255, 255), alpha=alpha, thickness=4, max_lines=3)
+                cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
+                frame_num += 1
 
-            if title and i < title_frames:
-                title_progress = i / title_frames
-                title_alpha = min(1.0, max(0, 1.0 - title_progress * 1.3))
-                draw_wrapped_centered_text(frame, title, int(MONTAGE_HEIGHT * 0.38), base_scale=1.8,
-                                            color=(255, 255, 255), alpha=title_alpha, thickness=3, max_lines=2)
+        # --- Segment 2: product photos held long enough to actually look at, crossfaded
+        # between shots instead of hard fast cuts, no text overlay competing with the photo ---
+        num_images = len(images)
+        do_crossfade = num_images > 1 and crossfade_frames > 0
+        for i in range(photo_frames):
+            slot = i // frames_per_image
+            image_index = slot % num_images
+            pos_in_slot = i % frames_per_image
+            local_progress = pos_in_slot / frames_per_image
+            frame = apply_ken_burns_zoom(images[image_index], local_progress, max_zoom=MONTAGE_PHOTO_MAX_ZOOM)
+
+            if do_crossfade and slot > 0 and pos_in_slot < crossfade_frames:
+                prev_index = (image_index - 1) % num_images
+                prev_frame = apply_ken_burns_zoom(images[prev_index], 1.0, max_zoom=MONTAGE_PHOTO_MAX_ZOOM)
+                blend = (pos_in_slot + 1) / crossfade_frames
+                frame = cv2.addWeighted(frame, blend, prev_frame, 1 - blend, 0)
 
             cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
             frame_num += 1
             if frame_num % 30 == 0:
                 print(f"  ✓ Frame {frame_num}/{total_frames}")
 
-        # --- Segment 2: one clean slide per feature, no busy photo behind the text ---
+        # --- Segment 3: one clean slide per feature, wrapped onto readable lines instead
+        # of shrinking long sentences down to a sliver of text ---
         for feature in features:
             for j in range(feature_frames_each):
                 frame = slide_bg.copy()
                 local_progress = j / feature_frames_each
-                alpha = min(1.0, local_progress * 5)
-                draw_centered_text(frame, feature, MONTAGE_HEIGHT // 2, base_scale=1.6, color=(255, 255, 255), alpha=alpha, thickness=3)
+                alpha = min(1.0, local_progress * 4)
+                draw_wrapped_centered_text(frame, feature, int(MONTAGE_HEIGHT * 0.46), base_scale=1.7,
+                                            color=(255, 255, 255), alpha=alpha, thickness=3, max_lines=3)
                 cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
                 frame_num += 1
                 if frame_num % 30 == 0:
                     print(f"  ✓ Frame {frame_num}/{total_frames}")
 
-        # --- Segment 3: dedicated CTA end card ---
+        # --- Segment 4: dedicated CTA end card with a real button treatment ---
         for j in range(cta_frames):
             frame = slide_bg.copy()
             local_progress = j / cta_frames
             alpha = min(1.0, local_progress * 4)
             if cta:
-                draw_centered_text(frame, cta, MONTAGE_HEIGHT // 2 - 50, base_scale=1.8, color=(255, 255, 255), alpha=alpha, thickness=3)
+                draw_cta_button(frame, cta, MONTAGE_HEIGHT // 2 - 30, alpha=alpha, base_scale=1.7)
             if link:
-                draw_centered_text(frame, link, MONTAGE_HEIGHT // 2 + 50, base_scale=1.0, color=(220, 220, 220), alpha=alpha, thickness=2)
+                draw_centered_text(frame, link, MONTAGE_HEIGHT // 2 + 90, base_scale=1.0, color=(230, 230, 230), alpha=alpha, thickness=2)
             cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
             frame_num += 1
             if frame_num % 30 == 0:
