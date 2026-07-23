@@ -594,6 +594,7 @@ def generate_video(image_path, audio_path, title, features, cta, output_path):
         total_frames = int(total_duration * fps)
 
         cta_text = cta.strip() if cta and cta.strip() else 'Order Now!'
+        logo = load_logo()
 
         print(f"🎬 Creating {total_frames} frames at {fps}fps...")
 
@@ -616,9 +617,10 @@ def generate_video(image_path, audio_path, title, features, cta, output_path):
                     draw_centered_text(frame, f"✓ {feature}", y_pos + i * 90, base_scale=1.5,
                                         color=(0, 255, 100), alpha=feature_alpha, thickness=3)
 
-            # Add CTA at end
+            # Add CTA at end, with the brand logo above it
             cta_alpha = min(1.0, max(0, (progress - 0.7) * 3))
             if cta_alpha > 0:
+                draw_logo(frame, logo, height - 210, alpha=cta_alpha, target_height=70)
                 draw_centered_text(frame, cta_text, height - 110, base_scale=2, color=(0, 150, 255), alpha=cta_alpha, thickness=3)
 
             # Save frame
