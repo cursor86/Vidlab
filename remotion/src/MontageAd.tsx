@@ -52,7 +52,7 @@ export const calculateMontageMetadata = async ({props}: {props: MontageProps}) =
 
 type Segment =
 	| {kind: 'title'; frames: number; title: string}
-	| {kind: 'photo'; frames: number; src: string}
+	| {kind: 'photo'; frames: number; src: string; title?: string}
 	| {kind: 'features'; frames: number; features: string[]}
 	| {kind: 'cta'; frames: number; cta: string; link: string; logoPath?: string};
 
@@ -84,7 +84,7 @@ export const MontageAd: React.FC<MontageProps> = ({
 	const segments: Segment[] = [];
 	if (title) segments.push({kind: 'title', frames: titleFrames, title});
 	for (let i = 0; i < slotCount; i++) {
-		segments.push({kind: 'photo', frames: photoFramesEach, src: images[i % images.length]});
+		segments.push({kind: 'photo', frames: photoFramesEach, src: images[i % images.length], title});
 	}
 	if (featuresFrames > 0) segments.push({kind: 'features', frames: featuresFrames, features});
 	segments.push({kind: 'cta', frames: ctaFrames, cta, link, logoPath});
@@ -109,7 +109,7 @@ export const MontageAd: React.FC<MontageProps> = ({
 					<React.Fragment key={i}>
 						<TransitionSeries.Sequence durationInFrames={segment.frames}>
 							{segment.kind === 'title' ? <TitleCard title={segment.title} /> : null}
-							{segment.kind === 'photo' ? <PhotoSlide src={segment.src} /> : null}
+							{segment.kind === 'photo' ? <PhotoSlide src={segment.src} title={segment.title} /> : null}
 							{segment.kind === 'features' ? <FeatureBullets features={segment.features} /> : null}
 							{segment.kind === 'cta' ? (
 								<CtaEnd cta={segment.cta} link={segment.link} logoPath={segment.logoPath} />
