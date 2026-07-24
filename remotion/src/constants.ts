@@ -2,7 +2,7 @@ export const FPS = 30;
 export const WIDTH = 720;
 export const HEIGHT = 1280;
 
-export const TITLE_SECONDS = 2.6;
+export const TITLE_SECONDS = 4;
 export const PHOTO_SECONDS_EACH = 3.0;
 export const TRANSITION_SECONDS = 0.4;
 export const FEATURES_SECONDS = 5.0;

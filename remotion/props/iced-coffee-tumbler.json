@@ -4,6 +4,6 @@
   "cta": "Shop Now",
   "link": "rizzova.com",
   "images": ["/home/user/Vidlab/uploads/products/iced-coffee-tumbler.png"],
-  "music": "",
+  "music": "/home/user/Vidlab/assets/rizzova-bg-music.mp3",
   "logoPath": "/home/user/Vidlab/assets/rizzova_logo.png"
 }

@@ -3,7 +3,12 @@
   "features": ["Heat-resistant glass with wood handle", "Marked measurements up to 75ml", "Perfect for espresso and pour-over"],
   "cta": "Shop Now",
   "link": "rizzova.com",
-  "images": ["/home/user/Vidlab/uploads/products/coffee-measuring-cup.png"],
-  "music": "",
+  "images": [
+    "/home/user/Vidlab/uploads/products/coffee-measuring-cup.png",
+    "/home/user/Vidlab/uploads/products/coffee-cup-pour.webp",
+    "/home/user/Vidlab/uploads/products/coffee-cup-heatproof.webp",
+    "/home/user/Vidlab/uploads/products/coffee-cup-usage-grid.webp"
+  ],
+  "music": "/home/user/Vidlab/assets/rizzova-bg-music.mp3",
   "logoPath": "/home/user/Vidlab/assets/rizzova_logo.png"
 }

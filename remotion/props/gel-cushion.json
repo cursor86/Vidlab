@@ -3,7 +3,12 @@
   "features": ["Cooling honeycomb gel design", "Relieves pressure, all-day comfort", "Non-slip, easy to clean"],
   "cta": "Shop Now",
   "link": "rizzova.com",
-  "images": ["/home/user/Vidlab/uploads/products/gel-cushion.jpeg"],
-  "music": "",
+  "images": [
+    "/home/user/Vidlab/uploads/products/gel-cushion.jpeg",
+    "/home/user/Vidlab/uploads/products/gel-cushion-carseat.jpeg",
+    "/home/user/Vidlab/uploads/products/gel-cushion-hero-inset.webp",
+    "/home/user/Vidlab/uploads/products/gel-cushion-detail-grid.webp"
+  ],
+  "music": "/home/user/Vidlab/assets/rizzova-bg-music.mp3",
   "logoPath": "/home/user/Vidlab/assets/rizzova_logo.png"
 }
