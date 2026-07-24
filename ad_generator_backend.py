@@ -100,8 +100,18 @@ def generate_ad():
         print(f"❌ Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+MONTAGE_WIDTH = 720
+MONTAGE_HEIGHT = 1280
+MONTAGE_FPS = 12
+MONTAGE_SECONDS_PER_IMAGE = 0.5
+MONTAGE_MIN_DURATION = 25
+MONTAGE_MAX_DURATION = 30
+MONTAGE_TITLE_FADE_SECONDS = 0.6
+MONTAGE_FEATURE_SLIDE_SECONDS = 1.8
+MONTAGE_CTA_SLIDE_SECONDS = 3.0
 MONTAGE_MAX_FEATURES = 3
-LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'rizzova_logo.png')
+SLIDE_GRADIENT_TOP = (234, 126, 102)     # BGR for #667eea
+SLIDE_GRADIENT_BOTTOM = (162, 75, 118)   # BGR for #764ba2
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.aac', '.ogg'}
 
 CLASSIC_WIDTH = 1080
@@ -109,15 +119,13 @@ CLASSIC_HEIGHT = 1920
 CLASSIC_MIN_DURATION = 25
 CLASSIC_MAX_DURATION = 30
 
-REMOTION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'remotion')
-
 @app.route('/api/generate-montage', methods=['POST'])
 def generate_montage():
     try:
         data = request.form
         title = data.get('title', '').strip()
         features = data.get('features', '').split(',')
-        features = [f.strip() for f in features if f.strip()][:MONTAGE_MAX_FEATURES]
+        features = [f.strip() for f in features if f.strip()]
         cta = data.get('cta', '').strip()
         link = data.get('link', '').strip()
 
@@ -136,39 +144,18 @@ def generate_montage():
         run_id = datetime.now().timestamp()
         image_paths = []
         for i, image_file in enumerate(image_files):
-            image_path = os.path.abspath(f'uploads/montage_{run_id}_{i}.png')
+            image_path = f'uploads/montage_{run_id}_{i}.png'
             image_file.save(image_path)
             image_paths.append(image_path)
 
-        music_path = os.path.abspath(f'temp/montage_music_{run_id}{music_ext}')
+        music_path = f'temp/montage_music_{run_id}{music_ext}'
         music_file.save(music_path)
 
         print(f"📸 {len(image_paths)} images saved for montage")
         print(f"🎵 Music saved: {music_path}")
 
-        output_path = os.path.abspath(f'outputs/montage_{run_id}.mp4')
-        props_path = os.path.abspath(f'temp/montage_props_{run_id}.json')
-        with open(props_path, 'w') as f:
-            json.dump({
-                'title': title,
-                'features': features,
-                'cta': cta,
-                'link': link,
-                'images': image_paths,
-                'music': music_path,
-                'logoPath': LOGO_PATH if os.path.exists(LOGO_PATH) else '',
-            }, f)
-
-        print("🎬 Rendering montage with Remotion...")
-        result = subprocess.run(
-            ['node', 'render.mjs', props_path, output_path],
-            cwd=REMOTION_DIR,
-            capture_output=True, text=True, timeout=600,
-        )
-        os.remove(props_path)
-
-        if result.returncode != 0:
-            print(f"❌ Remotion render error: {result.stderr}")
+        output_path = f'outputs/montage_{run_id}.mp4'
+        if not generate_montage_video(image_paths, music_path, title, features, cta, link, output_path):
             return jsonify({'error': 'Failed to generate montage video'}), 500
 
         print(f"✅ Montage generated: {output_path}")
@@ -198,22 +185,41 @@ def resize_cover(img, target_w, target_h):
     return resized[y0:y0 + target_h, x0:x0 + target_w]
 
 def resize_contain_blurred(img, target_w, target_h):
-    """Fit the whole image inside the frame with no cropping, centered over a
-    softly blurred, dimmed version of itself so there are no dead bars."""
+    """Fit the whole product photo inside target_w x target_h with no cropping,
+    padding any leftover space with a blurred, darkened copy of the same image
+    so the frame still looks fully filled instead of hard-cropping the product."""
     h, w = img.shape[:2]
 
-    bg = resize_cover(img, target_w, target_h)
-    bg = cv2.GaussianBlur(bg, (0, 0), sigmaX=35)
-    bg = (bg.astype(np.float32) * 0.5).astype(np.uint8)
+    background = resize_cover(img, target_w, target_h)
+    ksize = (min(target_w, target_h) // 12) | 1  # must be odd
+    background = cv2.GaussianBlur(background, (ksize, ksize), 0)
+    background = (background * 0.5).astype(np.uint8)
 
     scale = min(target_w / w, target_h / h)
     new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
-    fitted = cv2.resize(img, (new_w, new_h))
+    foreground = cv2.resize(img, (new_w, new_h))
 
     x0 = (target_w - new_w) // 2
     y0 = (target_h - new_h) // 2
-    frame = bg
-    frame[y0:y0 + new_h, x0:x0 + new_w] = fitted
+    background[y0:y0 + new_h, x0:x0 + new_w] = foreground
+    return background
+
+def apply_ken_burns_zoom(img, local_progress, max_zoom=0.08):
+    """Crop progressively tighter toward center to simulate a zoom-in."""
+    h, w = img.shape[:2]
+    zoom = 1.0 + max_zoom * local_progress
+    crop_w = int(w / zoom)
+    crop_h = int(h / zoom)
+    x0 = (w - crop_w) // 2
+    y0 = (h - crop_h) // 2
+    cropped = img[y0:y0 + crop_h, x0:x0 + crop_w]
+    return cv2.resize(cropped, (w, h))
+
+def make_gradient_bg(width, height, top_color, bottom_color):
+    """Solid vertical gradient background for text slides."""
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    for c in range(3):
+        frame[:, :, c] = np.linspace(top_color[c], bottom_color[c], height, dtype=np.uint8)[:, None]
     return frame
 
 def fit_font_scale(text, max_width, base_scale, font=cv2.FONT_HERSHEY_SIMPLEX, thickness=2, min_scale=0.5):
@@ -226,7 +232,7 @@ def fit_font_scale(text, max_width, base_scale, font=cv2.FONT_HERSHEY_SIMPLEX, t
         scale -= 0.1
     return min_scale
 
-def draw_centered_text(frame, text, y, max_width_ratio=0.85, base_scale=1.4, color=(255, 255, 255), alpha=1.0, thickness=2, outline=True):
+def draw_centered_text(frame, text, y, max_width_ratio=0.85, base_scale=1.4, color=(255, 255, 255), alpha=1.0, thickness=2):
     """Draw horizontally-centered text, auto-shrinking to fit within the frame width."""
     if not text or alpha <= 0:
         return
@@ -237,95 +243,135 @@ def draw_centered_text(frame, text, y, max_width_ratio=0.85, base_scale=1.4, col
     text_size = cv2.getTextSize(text, font, scale, thickness)[0]
     x = (width - text_size[0]) // 2
     overlay = frame.copy()
-    if outline:
-        cv2.putText(overlay, text, (x, y), font, scale, (0, 0, 0), thickness + 3, cv2.LINE_AA)
     cv2.putText(overlay, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
     cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
 
-def wrap_text_lines(text, font, scale, thickness, max_width):
-    """Greedily wrap text into lines that each fit within max_width."""
-    words = text.split()
-    lines = []
-    current = ""
-    for word in words:
-        trial = f"{current} {word}".strip()
-        if cv2.getTextSize(trial, font, scale, thickness)[0][0] <= max_width or not current:
-            current = trial
-        else:
-            lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    return lines
-
-def draw_wrapped_centered_text(frame, text, center_y, max_width_ratio=0.82, base_scale=1.7,
-                                color=(255, 255, 255), alpha=1.0, thickness=3, max_lines=2,
-                                min_scale=0.7, line_spacing=1.35):
-    """Draw short, prominent title text centered on the frame (both axes), wrapping onto
-    a couple of lines instead of shrinking illegibly small, with a dark outline so it stays
-    readable over any photo."""
+def draw_left_text(frame, text, x, y, max_width, base_scale=1.2, color=(255, 255, 255), alpha=1.0, thickness=2):
+    """Draw left-aligned text starting at x, auto-shrinking to fit within max_width."""
     if not text or alpha <= 0:
         return
     font = cv2.FONT_HERSHEY_SIMPLEX
-    width = frame.shape[1]
-    max_width = int(width * max_width_ratio)
-
-    scale = base_scale
-    lines = wrap_text_lines(text, font, scale, thickness, max_width)
-    while scale > min_scale and (len(lines) > max_lines or
-                                  any(cv2.getTextSize(l, font, scale, thickness)[0][0] > max_width for l in lines)):
-        scale -= 0.1
-        lines = wrap_text_lines(text, font, scale, thickness, max_width)
-    lines = lines[:max_lines]
-
-    line_height = cv2.getTextSize("Ag", font, scale, thickness)[0][1]
-    gap = int(line_height * line_spacing)
-    total_h = gap * (len(lines) - 1)
-    start_y = int(center_y - total_h / 2)
-
+    scale = fit_font_scale(text, max_width, base_scale, font, thickness)
     overlay = frame.copy()
-    for i, line in enumerate(lines):
-        size = cv2.getTextSize(line, font, scale, thickness)[0]
-        x = (width - size[0]) // 2
-        y = start_y + i * gap
-        cv2.putText(overlay, line, (x, y), font, scale, (0, 0, 0), thickness + 3, cv2.LINE_AA)
-        cv2.putText(overlay, line, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+    cv2.putText(overlay, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
     cv2.addWeighted(overlay, min(1.0, alpha), frame, 1 - min(1.0, alpha), 0, frame)
 
-_logo_cache = {}
+def generate_montage_video(image_paths, music_path, title, features, cta, link, output_path):
+    """Generate a structured montage: fast-cut hook photos -> feature slides -> CTA end card, synced to music."""
+    try:
+        images = []
+        for p in image_paths:
+            img = cv2.imread(p)
+            if img is None:
+                print(f"❌ Failed to read image: {p}")
+                continue
+            images.append(resize_contain_blurred(img, MONTAGE_WIDTH, MONTAGE_HEIGHT))
 
-def load_logo():
-    """Load the brand logo once and cache it; returns None if no logo asset has been added yet."""
-    if LOGO_PATH not in _logo_cache:
-        if os.path.exists(LOGO_PATH):
-            _logo_cache[LOGO_PATH] = cv2.imread(LOGO_PATH, cv2.IMREAD_UNCHANGED)
-        else:
-            _logo_cache[LOGO_PATH] = None
-    return _logo_cache[LOGO_PATH]
+        if not images:
+            print("❌ No valid images to build montage")
+            return False
 
-def draw_logo(frame, logo, center_y, alpha=1.0, target_height=110):
-    """Composite the (optionally transparent) brand logo centered at center_y."""
-    if logo is None or alpha <= 0:
-        return
-    h, w = logo.shape[:2]
-    scale = target_height / h
-    new_w, new_h = max(1, int(w * scale)), target_height
-    resized = cv2.resize(logo, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        features = [f.strip() for f in features if f.strip()][:MONTAGE_MAX_FEATURES]
 
-    x0 = (frame.shape[1] - new_w) // 2
-    y0 = center_y - new_h // 2
-    x1, y1 = x0 + new_w, y0 + new_h
-    if x0 < 0 or y0 < 0 or x1 > frame.shape[1] or y1 > frame.shape[0]:
-        return
+        music_duration = get_audio_duration(music_path)
+        if music_duration is None:
+            music_duration = MONTAGE_MIN_DURATION
+        total_duration = max(MONTAGE_MIN_DURATION, min(music_duration, MONTAGE_MAX_DURATION))
 
-    roi = frame[y0:y1, x0:x1].astype(np.float32)
-    if resized.shape[2] == 4:
-        logo_alpha = (resized[:, :, 3:4].astype(np.float32) / 255.0) * alpha
-        fg = resized[:, :, :3].astype(np.float32)
-        frame[y0:y1, x0:x1] = (fg * logo_alpha + roi * (1 - logo_alpha)).astype(np.uint8)
-    else:
-        fg = resized[:, :, :3].astype(np.float32)
-        frame[y0:y1, x0:x1] = (fg * alpha + roi * (1 - alpha)).astype(np.uint8)
+        fps = MONTAGE_FPS
+        frames_per_image = max(1, int(MONTAGE_SECONDS_PER_IMAGE * fps))
+        title_fade_frames = max(1, int(MONTAGE_TITLE_FADE_SECONDS * fps))
+        cta_frames = int(MONTAGE_CTA_SLIDE_SECONDS * fps)
+        feature_frames_each = int(MONTAGE_FEATURE_SLIDE_SECONDS * fps)
+        feature_total_frames = feature_frames_each * len(features)
+
+        total_frames = max(frames_per_image + cta_frames, int(total_duration * fps))
+        photo_frames = max(frames_per_image, total_frames - cta_frames - feature_total_frames)
+
+        print(f"🎬 Building montage: {photo_frames} hook-photo frames, "
+              f"{feature_total_frames} feature-slide frames, {cta_frames} CTA frames at {fps}fps")
+
+        frames_dir = f'temp/montage_frames_{datetime.now().timestamp()}'
+        os.makedirs(frames_dir, exist_ok=True)
+
+        slide_bg = make_gradient_bg(MONTAGE_WIDTH, MONTAGE_HEIGHT, SLIDE_GRADIENT_TOP, SLIDE_GRADIENT_BOTTOM)
+        frame_num = 0
+
+        # --- Segment 1: fast-cut hook photos, with the title held on top throughout ---
+        for i in range(photo_frames):
+            image_index = (i // frames_per_image) % len(images)
+            local_progress = (i % frames_per_image) / frames_per_image
+            frame = apply_ken_burns_zoom(images[image_index], local_progress)
+
+            if title:
+                # Held on screen for the whole hook segment, with a quick
+                # fade-in and fade-out at the edges instead of vanishing early.
+                title_alpha = min(1.0, i / title_fade_frames, (photo_frames - 1 - i) / title_fade_frames)
+                draw_centered_text(frame, title, 110, base_scale=1.3, color=(255, 255, 255), alpha=title_alpha, thickness=3)
+
+            cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
+            frame_num += 1
+            if frame_num % 30 == 0:
+                print(f"  ✓ Frame {frame_num}/{total_frames}")
+
+        # --- Segment 2: one clean slide per feature, no busy photo behind the text ---
+        for feature in features:
+            for j in range(feature_frames_each):
+                frame = slide_bg.copy()
+                local_progress = j / feature_frames_each
+                alpha = min(1.0, local_progress * 5)
+                draw_centered_text(frame, feature, MONTAGE_HEIGHT // 2, base_scale=1.6, color=(255, 255, 255), alpha=alpha, thickness=3)
+                cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
+                frame_num += 1
+                if frame_num % 30 == 0:
+                    print(f"  ✓ Frame {frame_num}/{total_frames}")
+
+        # --- Segment 3: dedicated CTA end card ---
+        for j in range(cta_frames):
+            frame = slide_bg.copy()
+            local_progress = j / cta_frames
+            alpha = min(1.0, local_progress * 4)
+            if cta:
+                draw_centered_text(frame, cta, MONTAGE_HEIGHT // 2 - 50, base_scale=1.8, color=(255, 255, 255), alpha=alpha, thickness=3)
+            if link:
+                draw_centered_text(frame, link, MONTAGE_HEIGHT // 2 + 50, base_scale=1.0, color=(220, 220, 220), alpha=alpha, thickness=2)
+            cv2.imwrite(f'{frames_dir}/frame_{frame_num:06d}.png', frame)
+            frame_num += 1
+            if frame_num % 30 == 0:
+                print(f"  ✓ Frame {frame_num}/{total_frames}")
+
+        print("🎬 Assembling montage with FFmpeg...")
+
+        ffmpeg_cmd = [
+            'ffmpeg', '-y',
+            '-framerate', str(fps),
+            '-i', f'{frames_dir}/frame_%06d.png',
+            '-stream_loop', '-1',
+            '-i', music_path,
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+            '-c:a', 'aac',
+            '-t', str(total_duration),
+            output_path
+        ]
+
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print(f"❌ FFmpeg error: {result.stderr}")
+            return False
+
+        print(f"✅ Montage created: {output_path}")
+
+        import shutil
+        shutil.rmtree(frames_dir)
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Montage generation error: {e}")
+        return False
 
 def generate_script(title, features, cta):
     """Generate ad script"""
@@ -381,7 +427,6 @@ def generate_video(image_path, audio_path, title, features, cta, output_path):
         total_frames = int(total_duration * fps)
 
         cta_text = cta.strip() if cta and cta.strip() else 'Order Now!'
-        logo = load_logo()
 
         print(f"🎬 Creating {total_frames} frames at {fps}fps...")
 
@@ -390,25 +435,23 @@ def generate_video(image_path, audio_path, title, features, cta, output_path):
             frame = img.copy()
             progress = frame_num / total_frames
 
-            # Add title with fade-in effect, short and prominent like a hero headline
+            # Add title with fade-in effect
             alpha = min(1.0, progress * 3)  # Fade in over first 1/3
             if alpha > 0:
-                draw_wrapped_centered_text(frame, title, int(height * 0.16), base_scale=2.4,
-                                            color=(255, 255, 255), alpha=alpha, thickness=4, max_lines=2)
+                draw_centered_text(frame, title, 110, base_scale=2, color=(255, 255, 255), alpha=alpha, thickness=3)
 
-            # Add features, one clean centered line each, like feature callouts
+            # Add features with sliding effect
             feature_alpha = min(1.0, max(0, (progress - 0.2) * 2))
             if feature_alpha > 0:
-                y_pos = int(height * 0.30)
+                y_pos = 260
+                feature_max_width = width - 160
                 for i, feature in enumerate(features[:3]):
-                    draw_centered_text(frame, f"✓ {feature}", y_pos + i * 90, base_scale=1.5,
-                                        color=(0, 255, 100), alpha=feature_alpha, thickness=3)
+                    draw_left_text(frame, f"• {feature}", 100, y_pos + i*70, feature_max_width, base_scale=1.3, color=(0, 255, 100), alpha=feature_alpha, thickness=2)
 
-            # Add CTA at end, with the brand logo above it
+            # Add CTA at end
             cta_alpha = min(1.0, max(0, (progress - 0.7) * 3))
             if cta_alpha > 0:
-                draw_logo(frame, logo, height - 210, alpha=cta_alpha, target_height=70)
-                draw_centered_text(frame, cta_text, height - 110, base_scale=2, color=(0, 150, 255), alpha=cta_alpha, thickness=3)
+                draw_centered_text(frame, cta_text, height - 110, base_scale=2, color=(0, 100, 255), alpha=cta_alpha, thickness=3)
 
             # Save frame
             frame_path = f'{frames_dir}/frame_{frame_num:06d}.png'
