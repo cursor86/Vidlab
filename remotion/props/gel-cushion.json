@@ -1,13 +1,15 @@
 {
   "title": "A Feeling of Comfort",
   "features": ["Cooling honeycomb gel design", "Relieves pressure, all-day comfort", "Non-slip, easy to clean"],
+  "features2": ["Ultimate long-drive comfort", "Ergo-support pressure distribution", "Breathable honeycomb airflow"],
   "cta": "Shop Now",
   "link": "rizzova.com",
   "images": [
     "/home/user/Vidlab/uploads/products/gel-cushion.jpeg",
     "/home/user/Vidlab/uploads/products/gel-cushion-carseat.jpeg",
     "/home/user/Vidlab/uploads/products/gel-cushion-hero-inset.webp",
-    "/home/user/Vidlab/uploads/products/gel-cushion-detail-grid.webp"
+    "/home/user/Vidlab/uploads/products/gel-cushion-detail-grid.webp",
+    "/home/user/Vidlab/uploads/products/gel-cushion-longdrive.png"
   ],
   "music": "/home/user/Vidlab/assets/rizzova-bg-music.mp3",
   "logoPath": "/home/user/Vidlab/assets/rizzova_logo.png"

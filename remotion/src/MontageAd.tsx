@@ -14,7 +14,7 @@ import {
 	FPS,
 	MAX_DURATION_SECONDS,
 	MIN_DURATION_SECONDS,
-	PHOTO_SECONDS_EACH,
+	MIN_PHOTO_SECONDS_EACH,
 	TITLE_SECONDS,
 	TRANSITION_SECONDS,
 } from './constants';
@@ -22,6 +22,9 @@ import {
 export const montageSchema = z.object({
 	title: z.string(),
 	features: z.array(z.string()),
+	// Optional second attributes card, shown right after the first, for
+	// products with more selling points than fit on one screen.
+	features2: z.array(z.string()).optional(),
 	cta: z.string(),
 	link: z.string(),
 	images: z.array(z.string()),
@@ -40,8 +43,7 @@ export type MontageProps = z.infer<typeof montageSchema>;
 const secondsToFrames = (seconds: number) => Math.round(seconds * FPS);
 
 // Same budgeting approach as the Python backend: reserve frames for the
-// title/features/CTA cards, then fill whatever's left with photos, cycling
-// through the uploaded images if there are more frames than images.
+// title/features/CTA cards, then fill whatever's left with photos.
 export const calculateMontageMetadata = async ({props}: {props: MontageProps}) => {
 	const audioDuration = props.music ? await getAudioDurationSeconds(props.music) : MIN_DURATION_SECONDS;
 	const totalSeconds = Math.max(MIN_DURATION_SECONDS, Math.min(audioDuration, MAX_DURATION_SECONDS));
@@ -59,6 +61,7 @@ type Segment =
 export const MontageAd: React.FC<MontageProps> = ({
 	title,
 	features,
+	features2,
 	cta,
 	link,
 	images,
@@ -69,24 +72,31 @@ export const MontageAd: React.FC<MontageProps> = ({
 	const titleFrames = title ? secondsToFrames(TITLE_SECONDS) : 0;
 	const ctaFrames = secondsToFrames(CTA_SECONDS);
 	const featuresFrames = features.length > 0 ? secondsToFrames(FEATURES_SECONDS) : 0;
+	const features2Frames = features2 && features2.length > 0 ? secondsToFrames(FEATURES_SECONDS) : 0;
 	const transitionFrames = secondsToFrames(TRANSITION_SECONDS);
-	const photoFramesEach = secondsToFrames(PHOTO_SECONDS_EACH);
+	const minPhotoFrames = secondsToFrames(MIN_PHOTO_SECONDS_EACH);
 
 	// Falls back to the max only for the Remotion Studio preview, where
 	// calculateMetadata may not have run yet against real props.
 	const effectiveTotalFrames = totalFrames ?? secondsToFrames(MAX_DURATION_SECONDS);
 	const photoBudgetFrames = Math.max(
-		photoFramesEach,
-		effectiveTotalFrames - titleFrames - ctaFrames - featuresFrames
+		minPhotoFrames,
+		effectiveTotalFrames - titleFrames - ctaFrames - featuresFrames - features2Frames
 	);
-	const slotCount = images.length > 0 ? Math.max(1, Math.ceil(photoBudgetFrames / photoFramesEach)) : 0;
+
+	// Every uploaded photo gets exactly one slot - no repeats - with the
+	// available time split evenly between them, instead of cycling through
+	// the same images to fill a fixed per-photo duration.
+	const slotCount = images.length;
+	const photoFramesEach = slotCount > 0 ? Math.max(minPhotoFrames, Math.floor(photoBudgetFrames / slotCount)) : 0;
 
 	const segments: Segment[] = [];
 	if (title) segments.push({kind: 'title', frames: titleFrames, title, logoPath});
 	for (let i = 0; i < slotCount; i++) {
-		segments.push({kind: 'photo', frames: photoFramesEach, src: images[i % images.length], title});
+		segments.push({kind: 'photo', frames: photoFramesEach, src: images[i], title});
 	}
 	if (featuresFrames > 0) segments.push({kind: 'features', frames: featuresFrames, features});
+	if (features2Frames > 0) segments.push({kind: 'features', frames: features2Frames, features: features2 as string[]});
 	segments.push({kind: 'cta', frames: ctaFrames, cta, link, logoPath});
 
 	// TransitionSeries overlaps every adjacent pair of sequences by the

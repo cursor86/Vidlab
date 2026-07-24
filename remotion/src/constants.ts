@@ -4,6 +4,7 @@ export const HEIGHT = 1280;
 
 export const TITLE_SECONDS = 4;
 export const PHOTO_SECONDS_EACH = 3.0;
+export const MIN_PHOTO_SECONDS_EACH = 1.5;
 export const TRANSITION_SECONDS = 0.4;
 export const FEATURES_SECONDS = 5.0;
 export const CTA_SECONDS = 3.5;
