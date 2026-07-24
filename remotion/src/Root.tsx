@@ -17,7 +17,7 @@ export const RemotionRoot: React.FC = () => {
 				title: 'Your Product Name',
 				features: ['First key feature', 'Second key feature', 'Third key feature'],
 				cta: 'Shop Now',
-				link: 'https://example.com',
+				link: 'rizzova.com',
 				images: [],
 				music: '',
 				logoPath: '',

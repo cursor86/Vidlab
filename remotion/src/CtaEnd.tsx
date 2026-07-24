@@ -37,7 +37,14 @@ export const CtaEnd: React.FC<{cta: string; link: string; logoPath?: string}> = 
 				</div>
 			) : null}
 			{link ? (
-				<div style={{color: GOLD, fontFamily: FONT_FAMILY, fontWeight: 700, fontSize: 22}}>
+				<div style={{
+						color: GOLD,
+						fontFamily: FONT_FAMILY,
+						fontWeight: 700,
+						fontSize: 26,
+						textDecoration: 'underline',
+						textUnderlineOffset: 4,
+					}}>
 					{link}
 				</div>
 			) : null}
